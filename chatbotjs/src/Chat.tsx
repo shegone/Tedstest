@@ -16,6 +16,12 @@ import {
 } from 'ai/react';
 import { ChatbotConfig } from '@/types';
 
+interface ChatMessage {
+  content: string;
+  role: 'assistant' | 'user'; // Indicates whether the message is from the assistant or the user
+  timestamp: string; // Represents the time the message was sent, typically in milliseconds since the Unix epoch
+  // Additional properties if needed
+}
 
 export default function ChatBox() {
   const [loading, setLoading] = useState(true)
@@ -23,12 +29,20 @@ export default function ChatBox() {
   const [chatbotId, setChatbotId] = useState<string>()
   const [isChatVisible, setIsChatVisible] = useState(false);
 
+  const [chatMessages, setChatMessages] = useState<{ [threadId: string]: ChatMessage[] }>({}); // State variable to hold messages by threadId
+  const [lastInput, setLastInput] = useState(''); // State variable to hold the last user input
+
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
 
-  const { status, messages, input, submitMessage, handleInputChange } =
-    useAssistant({
-      api: `${siteConfig.url}api/chatbots/${window.chatbotConfig.chatbotId}/chat`,
-    });
+  const { status, messages, input, submitMessage, handleInputChange, threadId } = useAssistant({
+    api: `${siteConfig.url}api/chatbots/${window.chatbotConfig.chatbotId}/chat`,
+  });
+
+  function handleSubmitMessage(e: any) {
+    e.preventDefault();
+    setLastInput(input);
+    submitMessage(e);
+  }
 
   const toggleChatVisibility = () => {
     setIsChatVisible(!isChatVisible);
@@ -39,8 +53,32 @@ export default function ChatBox() {
   useEffect(() => {
     // Scroll to the bottom of the container on messages update
     if (containerRef.current) containerRef.current.scrollTop = containerRef.current.scrollHeight;
+
+    const lastMessage = messages[messages.length - 1];
+    console.log(lastMessage)
+
+    if (threadId || "" !== "" && lastMessage?.role === 'assistant') {
+      // If the user input is not already added to the chatMessages state, add it
+      console.log(threadId)
+      addMessage(threadId, 'user', lastInput);
+    }
   }, [messages]);
 
+  // Function to add a new message to the messages state
+  // Function to add a new message to the messages state
+  const addMessage = (threadId: string, role: 'assistant' | 'user', newMessage: string) => {
+    const messageWithTime: ChatMessage = {
+      content: newMessage,
+      timestamp: new Date().toISOString(), // Add current time
+      role: role, // Update the role property to a valid value
+    };
+
+    setChatMessages(prevMessages => ({
+      ...prevMessages,
+      [threadId]: [...(prevMessages[threadId] || []), messageWithTime],
+    }));
+    localStorage.setItem('chatMessages', JSON.stringify(chatMessages));
+  };
 
   useEffect(() => {
     function handleResize() {
@@ -56,6 +94,14 @@ export default function ChatBox() {
       setLoading(true)
       const id = window.chatbotConfig.chatbotId
       setChatbotId(id)
+
+      // Fetch previous messages from storage or API
+      console.log(localStorage)
+      const storedMessages = localStorage.getItem('chatMessages');
+      if (storedMessages) {
+        console.log('Chat messages loaded from storage:', storedMessages);
+        setChatMessages(JSON.parse(storedMessages));
+      }
 
       const config = await fetch(`${siteConfig.url}api/chatbots/${id}/config`)
       const chatbotConfig: ChatbotConfig = await config.json()
@@ -178,7 +224,7 @@ export default function ChatBox() {
               <div
                 className='w-full flex items-center gap-2'
               >
-                <form onSubmit={submitMessage}
+                <form onSubmit={handleSubmitMessage}
                   className="flex align-right items-end w-full"
                 >
                   <Input

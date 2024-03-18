@@ -17,6 +17,7 @@ import {
 import { ChatbotConfig } from '@/types';
 
 interface ChatMessage {
+  id: string;
   content: string;
   role: 'assistant' | 'user'; // Indicates whether the message is from the assistant or the user
   timestamp: string; // Represents the time the message was sent, typically in milliseconds since the Unix epoch
@@ -28,13 +29,17 @@ export default function ChatBox() {
   const [config, setConfig] = useState<ChatbotConfig>()
   const [chatbotId, setChatbotId] = useState<string>()
   const [isChatVisible, setIsChatVisible] = useState(false);
+  const [isChatHistoryVisible, setIsChatHistoryVisible] = useState(false);
 
   const [chatMessages, setChatMessages] = useState<{ [threadId: string]: ChatMessage[] }>({}); // State variable to hold messages by threadId
   const [lastInput, setLastInput] = useState(''); // State variable to hold the last user input
 
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
 
+  const [selectedThreadId, setSelectedThreadId] = useState<string>("");
+
   const { status, messages, input, submitMessage, handleInputChange, threadId } = useAssistant({
+    threadId: selectedThreadId,
     api: `${siteConfig.url}api/chatbots/${window.chatbotConfig.chatbotId}/chat`,
   });
 
@@ -42,6 +47,22 @@ export default function ChatBox() {
     e.preventDefault();
     setLastInput(input);
     submitMessage(e);
+  }
+
+  function selectNewThreadId(newThreadId: string) {
+    // Update the threadId state variable
+    // This will trigger the useEffect hook to load the messages for the new thread
+    // This will also trigger the useEffect hook to scroll to the bottom of the chat window
+    console.log(`Selected threadId: ${newThreadId}`);
+    setSelectedThreadId(newThreadId);
+
+
+    //set new messages
+    messages = chatMessages[newThreadId] || [];
+  }
+
+  const toggleChatHistory = () => {
+    setIsChatHistoryVisible(!isChatHistoryVisible);
   }
 
   const toggleChatVisibility = () => {
@@ -54,30 +75,39 @@ export default function ChatBox() {
     // Scroll to the bottom of the container on messages update
     if (containerRef.current) containerRef.current.scrollTop = containerRef.current.scrollHeight;
 
-    const lastMessage = messages[messages.length - 1];
-    console.log(lastMessage)
-
-    if (threadId || "" !== "" && lastMessage?.role === 'assistant') {
-      // If the user input is not already added to the chatMessages state, add it
-      console.log(threadId)
-      addMessage(threadId, 'user', lastInput);
+    if (threadId || "" !== "") {
+      setSelectedThreadId(threadId);
+      // for all messages in the thread, add them to chatMessages state
+      // validate that the message ids are not already added to the chatMessages state
+      const allMessages = chatMessages[threadId] || [];
+      const newMessages = messages.filter((message: Message) => {
+        if (message.id === "") {
+          return false;
+        }
+        return !allMessages.some((chatMessage: ChatMessage) => chatMessage.id === message.id);
+      });
+      newMessages.forEach((message: Message) => {
+        addMessage(threadId, message.id, message.role, message.content);
+      })
     }
+
   }, [messages]);
 
-  // Function to add a new message to the messages state
-  // Function to add a new message to the messages state
-  const addMessage = (threadId: string, role: 'assistant' | 'user', newMessage: string) => {
+  const addMessage = (threadId: string, id: string, role: 'assistant' | 'user', newMessage: string) => {
     const messageWithTime: ChatMessage = {
+      id: id,
       content: newMessage,
       timestamp: new Date().toISOString(), // Add current time
       role: role, // Update the role property to a valid value
     };
+    // load messages from localstorage
+    const storageChatMessages = JSON.parse(localStorage.getItem('chatMessages') || '{}');
+    // merge the messages
+    const mergedMessages = { ...storageChatMessages, [threadId]: [...(storageChatMessages[threadId] || []), messageWithTime] };
 
-    setChatMessages(prevMessages => ({
-      ...prevMessages,
-      [threadId]: [...(prevMessages[threadId] || []), messageWithTime],
-    }));
-    localStorage.setItem('chatMessages', JSON.stringify(chatMessages));
+    localStorage.setItem('chatMessages', JSON.stringify(mergedMessages));
+    // add them to chatMessages state
+    setChatMessages(mergedMessages);
   };
 
   useEffect(() => {
@@ -96,10 +126,8 @@ export default function ChatBox() {
       setChatbotId(id)
 
       // Fetch previous messages from storage or API
-      console.log(localStorage)
       const storedMessages = localStorage.getItem('chatMessages');
       if (storedMessages) {
-        console.log('Chat messages loaded from storage:', storedMessages);
         setChatMessages(JSON.parse(storedMessages));
       }
 
@@ -111,7 +139,7 @@ export default function ChatBox() {
     init();
   }, [])
 
-  const chatboxClassname = isMobile ? "fixed inset-0 flex flex-col" : "mr-3 flex flex-col max-w-md min-h-[65vh] max-h-[65vh]";
+  const chatboxClassname = isMobile ? "fixed inset-0 flex flex-col" : "mr-3 flex flex-col max-w-lg min-h-[65vh] max-h-[65vh]";
   const inputContainerClassname = isMobile ? "fixed bottom-0 left-0 w-full bg-white" : "";
   const inputContainerHeight = 70; // Adjust this value based on your actual input container height
 
@@ -119,7 +147,46 @@ export default function ChatBox() {
     <div className="fixed bottom-0 right-0 mb-4 z-50 flex items-end">
       {isChatVisible &&
         <Card className={chatboxClassname + " bg-white shadow-lg transform transition-transform duration-200 ease-in-out" + (isMobile ? " overflow-auto" : "")}>
+          {isChatHistoryVisible &&
+            <div className="transition ease-in-out delay-150  flex-grow h-full border-r-2 w-1/2 space-y-2 absolute bg-white">
+              <div style={{ background: config ? config!.chatHeaderBackgroundColor : "" }} className="flex rounded-t-lg shadow justify-between items-center p-4">
+                <div>
+                  <Button onClick={toggleChatHistory} variant="ghost">
+                    <Icons.close style={{ color: config ? config!.chatHeaderTextColor : "" }} className="h-5 w-5 text-gray-500" />
+                  </Button>
+                </div>
+                <h3 style={{ color: config ? config!.chatHeaderTextColor : "" }} className="text-xl font-semibold">Previous conversations</h3>
+              </div>
+              {
+                // list all last messages of each threads and put last message time on the right 
+                // if messages are more than 10 chars, show only the first 10 chars
+                chatMessages && Object.keys(chatMessages).map((currentMessageThreadId: string) => {
+                  const lastMessage = chatMessages[currentMessageThreadId][0];
+
+                  return (
+                    <button onClick={() => selectNewThreadId(currentMessageThreadId)} key={currentMessageThreadId} className={threadId === currentMessageThreadId ? 'bg-gray-200' : '' + ' hover:bg-gray-200 border-2 p-2 rounded m-2'}>
+                      <p className="text-md mb-2" >
+                        {
+                          lastMessage.content.length > 20 ? lastMessage.content.substring(0, 20) + '...' : lastMessage.content
+                        }
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {
+                          new Date(lastMessage.timestamp).toLocaleDateString()
+                        }
+                      </p>
+                    </button>
+                  )
+                })
+              }
+            </div>
+          }
           <div style={{ background: config ? config!.chatHeaderBackgroundColor : "" }} className="flex rounded-t-lg shadow justify-between items-center p-4">
+            <div>
+              <Button onClick={toggleChatHistory} variant="ghost">
+                <Icons.menu style={{ color: config ? config!.chatHeaderTextColor : "" }} className="h-5 w-5 text-gray-500" />
+              </Button>
+            </div>
             <h3 style={{ color: config ? config!.chatHeaderTextColor : "" }} className="text-xl font-semibold">{config ? config!.chatTitle : ""}</h3>
             <div>
               <Button onClick={toggleChatVisibility} variant="ghost">
@@ -127,8 +194,8 @@ export default function ChatBox() {
               </Button>
             </div>
           </div>
-          <div className="p-4 space-y-4 flex-grow overflow-auto custom-scrollbar" style={{ marginBottom: isMobile ? `${inputContainerHeight}px` : '0' }} ref={containerRef}>
-            <div className="space-y-4">
+          <div className={"space-y-4 flex flex-row flex-grow overflow-auto custom-scrollbar"} style={{ marginBottom: isMobile ? `${inputContainerHeight}px` : '0' }} ref={containerRef}>
+            <div className="space-y-4 p-4">
               <div key="0" className="flex w-5/6 items-end gap-2">
                 <div className="rounded-lg bg-zinc-200 p-2" style={{ background: config ? config.chatbotReplyBackgroundColor : "" }}>
                   <p className="text-md" style={{ color: config ? config.chatbotReplyTextColor : "" }}>{config ? config!.welcomeMessage : ""}</p>

@@ -31,7 +31,8 @@ export default function ChatBox() {
   const [isChatVisible, setIsChatVisible] = useState(false);
   const [isChatHistoryVisible, setIsChatHistoryVisible] = useState(false);
 
-  const [chatMessages, setChatMessages] = useState<{ [threadId: string]: ChatMessage[] }>({}); // State variable to hold messages by threadId
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]); // State variable to hold messages by threadId
+  const [allChatMessages, setAllChatMessages] = useState<ChatMessage[]>([]); // State variable to hold all messages
   const [lastInput, setLastInput] = useState(''); // State variable to hold the last user input
 
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
@@ -40,7 +41,7 @@ export default function ChatBox() {
 
   const { status, messages, input, submitMessage, handleInputChange, threadId } = useAssistant({
     threadId: selectedThreadId,
-    api: `${siteConfig.url}api/chatbots/${window.chatbotConfig.chatbotId}/chat`,
+    api: `http://localhost:3000/api/chatbots/${window.chatbotConfig.chatbotId}/chat`,
   });
 
   function handleSubmitMessage(e: any) {
@@ -56,9 +57,9 @@ export default function ChatBox() {
     console.log(`Selected threadId: ${newThreadId}`);
     setSelectedThreadId(newThreadId);
 
-
-    //set new messages
-    messages = chatMessages[newThreadId] || [];
+    // reload messages from localstorage
+    const storageChatMessages = JSON.parse(localStorage.getItem('chatMessages') || '{}');
+    setChatMessages(storageChatMessages[newThreadId]);
   }
 
   const toggleChatHistory = () => {
@@ -89,6 +90,8 @@ export default function ChatBox() {
       newMessages.forEach((message: Message) => {
         addMessage(threadId, message.id, message.role, message.content);
       })
+    } else {
+      //addMessage('new', 'new', 'user', lastInput)
     }
 
   }, [messages]);
@@ -107,7 +110,8 @@ export default function ChatBox() {
 
     localStorage.setItem('chatMessages', JSON.stringify(mergedMessages));
     // add them to chatMessages state
-    setChatMessages(mergedMessages);
+    setChatMessages(mergedMessages[threadId]);
+    setAllChatMessages(JSON.parse(localStorage.getItem('chatMessages') || '{}'));
   };
 
   useEffect(() => {
@@ -127,8 +131,11 @@ export default function ChatBox() {
 
       // Fetch previous messages from storage or API
       const storedMessages = localStorage.getItem('chatMessages');
+      if (storedMessages && threadId) {
+        setChatMessages(JSON.parse(storedMessages)[threadId]);
+      }
       if (storedMessages) {
-        setChatMessages(JSON.parse(storedMessages));
+        setAllChatMessages(JSON.parse(storedMessages));
       }
 
       const config = await fetch(`${siteConfig.url}api/chatbots/${id}/config`)
@@ -148,7 +155,7 @@ export default function ChatBox() {
       {isChatVisible &&
         <Card className={chatboxClassname + " bg-white shadow-lg transform transition-transform duration-200 ease-in-out" + (isMobile ? " overflow-auto" : "")}>
           {isChatHistoryVisible &&
-            <div className="transition ease-in-out delay-150  flex-grow h-full border-r-2 w-1/2 space-y-2 absolute bg-white">
+            <div className="transition ease-in-out delay-150 flex flex-col h-full border-r-2 w-1/2 rounded-lg space-y-2 absolute bg-white">
               <div style={{ background: config ? config!.chatHeaderBackgroundColor : "" }} className="flex rounded-t-lg shadow justify-between items-center p-4">
                 <div>
                   <Button onClick={toggleChatHistory} variant="ghost">
@@ -160,11 +167,11 @@ export default function ChatBox() {
               {
                 // list all last messages of each threads and put last message time on the right 
                 // if messages are more than 10 chars, show only the first 10 chars
-                chatMessages && Object.keys(chatMessages).map((currentMessageThreadId: string) => {
-                  const lastMessage = chatMessages[currentMessageThreadId][0];
+                allChatMessages && Object.keys(allChatMessages).map((currentMessageThreadId: string) => {
+                  const lastMessage = allChatMessages[0];
 
                   return (
-                    <button onClick={() => selectNewThreadId(currentMessageThreadId)} key={currentMessageThreadId} className={threadId === currentMessageThreadId ? 'bg-gray-200' : '' + ' hover:bg-gray-200 border-2 p-2 rounded m-2'}>
+                    <button onClick={() => selectNewThreadId(currentMessageThreadId)} key={currentMessageThreadId} className={selectedThreadId === currentMessageThreadId ? 'bg-gray-200' : '' + ' hover:bg-gray-200 border-2 p-2 rounded m-2'}>
                       <p className="text-md mb-2" >
                         {
                           lastMessage.content.length > 20 ? lastMessage.content.substring(0, 20) + '...' : lastMessage.content
@@ -201,8 +208,16 @@ export default function ChatBox() {
                   <p className="text-md" style={{ color: config ? config.chatbotReplyTextColor : "" }}>{config ? config!.welcomeMessage : ""}</p>
                 </div>
               </div>
+
+              {!threadId && lastInput !== "" &&
+                <div className="flex max-w-5/6 items-end gap-2 justify-end">
+                  <div className="rounded-lg flex max-w-5/6 bg-blue-500 text-white p-2 self-end" style={{ background: config ? config.userReplyBackgroundColor : "" }}>
+                    <p className="text-md" style={{ color: config ? config.userReplyTextColor : "" }}>{lastInput}</p>
+                  </div>
+                </div>
+              }
               {
-                messages.map((message: Message) => {
+                chatMessages.map((message: ChatMessage) => {
                   if (message.role === "assistant") {
                     return (
                       <div key={message.id} className="flex w-5/6 items-end gap-2">
